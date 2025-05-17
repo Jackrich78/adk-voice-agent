@@ -44,43 +44,40 @@ function connectWebsocket() {
 
   // Handle incoming messages
   websocket.onmessage = function (event) {
-    // Parse the incoming message
     const message_from_server = JSON.parse(event.data);
-    console.log("[AGENT TO CLIENT] ", message_from_server);
+    console.log("[AGENT TO CLIENT RAW MSG] ", JSON.stringify(message_from_server)); // Log the raw data
 
-    // Show typing indicator for first message in a response sequence,
-    // but not for turn_complete messages
-    if (
-      !message_from_server.turn_complete &&
-      (message_from_server.mime_type === "text/plain" ||
-        message_from_server.mime_type === "audio/pcm")
-    ) {
-      typingIndicator.classList.add("visible");
+    if (message_from_server.mime_type === "application/json" && message_from_server.type === "status") {
+        console.log("[CLIENT STATUS UPDATE]: ", message_from_server.data);
+        // If it's "processing_completed_audio", we might want to keep typing indicator visible
+        if (message_from_server.data === "audio_received_processing") {
+            typingIndicator.classList.add("visible");
+        }
+        return; 
     }
 
-    // Check if the turn is complete
-    if (
-      message_from_server.turn_complete &&
-      message_from_server.turn_complete === true
-    ) {
-      // Reset currentMessageId to ensure the next message gets a new element
-      currentMessageId = null;
+    if (message_from_server.turn_complete === true) {
+      currentMessageId = null; // Reset for the next turn from the agent
       typingIndicator.classList.remove("visible");
+      console.log("[TURN COMPLETE RECEIVED FROM SERVER]");
       return;
     }
+    // If it's an interruption, also clear typing
+    if (message_from_server.interrupted === true) {
+        typingIndicator.classList.remove("visible");
+        currentMessageId = null;
+        console.log("[AGENT INTERRUPTED]");
+        // return; // Decide if you want to stop processing further parts on interruption
+    }
 
-    // If it's audio, play it
+
+    // If it's audio, play it (Your existing logic for this is fine)
     if (message_from_server.mime_type === "audio/pcm" && audioPlayerNode) {
+      typingIndicator.classList.remove("visible"); // Audio is playing, not typing
       audioPlayerNode.port.postMessage(base64ToArray(message_from_server.data));
-
-      // If we have an existing message element for this turn, add audio icon if needed
       if (currentMessageId) {
         const messageElem = document.getElementById(currentMessageId);
-        if (
-          messageElem &&
-          !messageElem.querySelector(".audio-icon") &&
-          is_audio
-        ) {
+        if (messageElem && !messageElem.querySelector(".audio-icon") && messagesDiv.classList.contains("audio-enabled")) {
           const audioIcon = document.createElement("span");
           audioIcon.className = "audio-icon";
           messageElem.prepend(audioIcon);
@@ -88,58 +85,66 @@ function connectWebsocket() {
       }
     }
 
-    // Handle text messages
+    // Handle text messages (Corrected Logic)
     if (message_from_server.mime_type === "text/plain") {
-      // Hide typing indicator
-      typingIndicator.classList.remove("visible");
+      typingIndicator.classList.remove("visible"); // We are receiving text, so agent is not "typing" in the traditional sense.
+                                                    // Typing indicator should ideally be shown by client *before* server response.
 
       const role = message_from_server.role || "model";
+      const isMsgPartial = message_from_server.partial === true;
 
-      // If we already have a message element for this turn, append to it
-      if (currentMessageId && role === "model") {
-        const existingMessage = document.getElementById(currentMessageId);
-        if (existingMessage) {
-          // Append the text without adding extra spaces
-          // Use a span element to maintain proper text flow
-          const textNode = document.createTextNode(message_from_server.data);
-          existingMessage.appendChild(textNode);
-
-          // Scroll to the bottom
-          messagesDiv.scrollTop = messagesDiv.scrollHeight;
-          return;
-        }
-      }
-
-      // Create a new message element if it's a new turn or user message
-      const messageId = Math.random().toString(36).substring(7);
-      const messageElem = document.createElement("p");
-      messageElem.id = messageId;
-
-      // Set class based on role
-      messageElem.className =
-        role === "user" ? "user-message" : "agent-message";
-
-      // Add audio icon for model messages if audio is enabled
-      if (is_audio && role === "model") {
-        const audioIcon = document.createElement("span");
-        audioIcon.className = "audio-icon";
-        messageElem.appendChild(audioIcon);
-      }
-
-      // Add the text content
-      messageElem.appendChild(
-        document.createTextNode(message_from_server.data)
-      );
-
-      // Add the message to the DOM
-      messagesDiv.appendChild(messageElem);
-
-      // Remember the ID of this message for subsequent responses in this turn
+      let messageElem;
       if (role === "model") {
-        currentMessageId = messageId;
-      }
+        if (currentMessageId) { // If we have an active bubble for this model's turn
+          messageElem = document.getElementById(currentMessageId);
+          if (messageElem) {
+            if (isMsgPartial) {
+              // Subsequent part of a stream, append
+              messageElem.appendChild(document.createTextNode(message_from_server.data));
+            } else {
+              // Final part of a stream (or a complete non-streamed message)
+              // Replace the content of the existing bubble with this final complete text.
+              let iconNode = messageElem.querySelector('.audio-icon');
+              messageElem.innerHTML = ''; // Clear previous partial content
+              if (iconNode) messageElem.appendChild(iconNode); // Preserve icon
+              messageElem.appendChild(document.createTextNode(message_from_server.data));
+              currentMessageId = null; // This model's turn/bubble is now complete and finalized.
+            }
+          } else {
+             currentMessageId = null; // Fallback: existing element not found, treat as new.
+          }
+        }
+        
+        // If messageElem is still not defined, it means this is the FIRST part of a model's response for this turn.
+        if (!messageElem) {
+          const messageId = Math.random().toString(36).substring(7);
+          messageElem = document.createElement("p");
+          messageElem.id = messageId;
+          messageElem.className = "agent-message";
 
-      // Scroll to the bottom
+          if (messagesDiv.classList.contains("audio-enabled")) {
+            const audioIcon = document.createElement("span");
+            audioIcon.className = "audio-icon";
+            messageElem.appendChild(audioIcon);
+          }
+          messageElem.appendChild(document.createTextNode(message_from_server.data));
+          messagesDiv.appendChild(messageElem);
+
+          if (isMsgPartial) {
+            currentMessageId = messageId; // This is the first part of a new stream, save its ID
+          } else {
+            currentMessageId = null; // This was a complete message, no more partials needed for this ID.
+          }
+        }
+      } else { // User message (role !== "model")
+        const messageId = Math.random().toString(36).substring(7);
+        messageElem = document.createElement("p");
+        messageElem.id = messageId;
+        messageElem.className = "user-message";
+        messageElem.appendChild(document.createTextNode(message_from_server.data));
+        messagesDiv.appendChild(messageElem);
+        currentMessageId = null; // User messages don't use currentMessageId for streaming from server
+      }
       messagesDiv.scrollTop = messagesDiv.scrollHeight;
     }
   };
@@ -287,24 +292,41 @@ startAudioButton.addEventListener("click", () => {
 
 // Stop audio recording when stop button is clicked
 stopAudioButton.addEventListener("click", () => {
+  console.log("Stop Audio button clicked.");
   stopAudio();
+
+  // UI changes
   stopAudioButton.style.display = "none";
   startAudioButton.style.display = "inline-block";
   startAudioButton.disabled = false;
   startAudioButton.textContent = "Enable Voice";
   recordingContainer.style.display = "none";
-
-  // Remove audio styling class
   messagesDiv.classList.remove("audio-enabled");
 
+  // Send a control message to the server indicating audio input is complete
+  // console.log("Sending audio_input_complete to server.");
+  // sendMessage({
+  //   mime_type: "application/json",
+  //   type: "control",
+  //   data: "audio_input_complete",
+  //   role: "user"
+  // });
+
+  // Remove audio styling class
+  // messagesDiv.classList.remove("audio-enabled");
+
   // Reconnect without audio mode
-  is_audio = false;
+  // is_audio = false;
 
   // Only reconnect if the connection is still open
-  if (websocket && websocket.readyState === WebSocket.OPEN) {
-    websocket.close();
+  // if (websocket && websocket.readyState === WebSocket.OPEN) {
+  //  websocket.close();
     // The onclose handler will trigger reconnection
-  }
+  // }
+
+  typingIndicator.classList.add("visible"); // Good: show server is processing the utterance
+  // is_audio = false; // DO NOT CHANGE THIS HERE. The current session is still an "audio input" session.
+                    // The user might want to speak again.
 });
 
 // Audio recorder handler
@@ -312,10 +334,13 @@ function audioRecorderHandler(pcmData) {
   // Only send data if we're still recording
   if (!isRecording) return;
 
+  const base64AudioData = arrayBufferToBase64(pcmData);
+  console.log(`[AudioRecorderHandler]: Captured PCM data, length: ${pcmData.byteLength}, Base64 length: ${base64AudioData.length}. Preparing to send.`); // ALWAYS LOG THIS
+
   // Send the pcm data as base64
   sendMessage({
     mime_type: "audio/pcm",
-    data: arrayBufferToBase64(pcmData),
+    data: base64AudioData,
   });
 
   // Log every few samples to avoid flooding the console
