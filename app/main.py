@@ -18,6 +18,12 @@ from google.genai import types # Keep for types.SpeechConfig if used
 from jarvis.agent import root_agent # This will be your Jarvis agent
 from starlette.websockets import WebSocketDisconnect, WebSocketState # For logging and checks
 
+# --- Configuration ---
+# Set to True for Agent to respond with Audio when input is Audio.
+# Set to False for Agent to always respond with Text.
+AGENT_SHOULD_SPEAK_AUDIO_RESPONSE = True # Or False, depending on your default preference
+# --- End Configuration ---
+
 # Load Gemini API Key
 load_dotenv()
 
@@ -45,10 +51,11 @@ def start_agent_session(session_id, is_audio_input_from_client=False): # Renamed
     )
 
     # AGENT'S RESPONSE MODALITY
-    if is_audio_input_from_client:
-        agent_output_modality = "AUDIO" # Agent will respond with Audio
-    else:
-        agent_output_modality = "TEXT"  # Agent will respond with Text
+    agent_output_modality = "TEXT" # Default to TEXT output
+
+    if is_audio_input_from_client and AGENT_SHOULD_SPEAK_AUDIO_RESPONSE:
+        agent_output_modality = "AUDIO" # Agent will respond with Audio if configured AND input was audio
+    # If input was text, or if AGENT_SHOULD_SPEAK_AUDIO_RESPONSE is False, output remains TEXT.
 
     config_parts = {"response_modalities": [agent_output_modality]}
 
