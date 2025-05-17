@@ -44,19 +44,28 @@ def start_agent_session(session_id, is_audio_input_from_client=False): # Renamed
         session_service=session_service,
     )
 
-    # --- Configuration for "Audio In -> Text Out" or "Text In -> Text Out" ---
-    # Agent's response modality is ALWAYS TEXT in this simplified setup.
-    agent_output_modality = "TEXT"
+    # AGENT'S RESPONSE MODALITY
+    if is_audio_input_from_client:
+        agent_output_modality = "AUDIO" # Agent will respond with Audio
+    else:
+        agent_output_modality = "TEXT"  # Agent will respond with Text
+
     config_parts = {"response_modalities": [agent_output_modality]}
 
     if is_audio_input_from_client:
-        print(f"[SESSION {session_id}]: Configuring RunConfig for AUDIO input (user) -> TEXT output (agent: {root_agent.name}).")
-        # Request transcript of what the USER said (comes back as text events via live_events)
-        config_parts["output_audio_transcription"] = {} 
-        # No speech_config needed here, as the agent's output modality is always TEXT.
-        # If you wanted the agent to respond with AUDIO, you would add speech_config here.
+        print(f"[SESSION {session_id}]: Configuring RunConfig for AUDIO input (user) -> {agent_output_modality} output (agent: {root_agent.name}).")
+        config_parts["output_audio_transcription"] = {} # Get transcript of user's speech
+
+        # If agent is speaking, we need speech_config for its voice
+        if agent_output_modality == "AUDIO":
+            speech_config = types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Kore") # Or your preferred voice for Jarvis
+                )
+            )
+            config_parts["speech_config"] = speech_config
     else: # Text input mode
-        print(f"[SESSION {session_id}]: Configuring RunConfig for TEXT input (user) -> TEXT output (agent: {root_agent.name}).")
+        print(f"[SESSION {session_id}]: Configuring RunConfig for TEXT input (user) -> {agent_output_modality} output (agent: {root_agent.name}).")
     
     print(f"[SESSION {session_id}]: Final config parts for RunConfig: {config_parts}")
     run_config = RunConfig(**config_parts)

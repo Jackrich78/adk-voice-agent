@@ -1,4 +1,10 @@
+# Local environment variables
 .env
+
+# Google OAuth credentials
+credentials.json
+
+# Virtual environment
 __pycache__/
 .venv/
 *.json
